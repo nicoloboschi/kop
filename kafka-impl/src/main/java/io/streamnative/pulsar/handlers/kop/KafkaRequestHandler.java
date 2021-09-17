@@ -463,7 +463,8 @@ public class KafkaRequestHandler extends KafkaCommandDecoder {
     }
 
     private boolean isInternalTopic(final String fullTopicName) {
-        return fullTopicName.equals(getTxnTopicName()) || fullTopicName.equals(txnTopicName);
+        return fullTopicName.equals(getOffsetsTopicName())
+                || fullTopicName.equals(txnTopicName);
     }
 
     // Get all topics in the configured allowed namespaces.
