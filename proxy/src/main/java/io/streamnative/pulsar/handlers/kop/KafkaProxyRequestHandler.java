@@ -106,7 +106,6 @@ public class KafkaProxyRequestHandler extends KafkaCommandDecoder {
     private final EndPoint advertisedEndPoint;
     private final String advertisedListeners;
     private final int defaultNumPartitions;
-    private final String offsetsTopicName;
     private final String txnTopicName;
     private final Set<String> allowedNamespaces;
     private final String groupIdStoredPath;
@@ -116,6 +115,7 @@ public class KafkaProxyRequestHandler extends KafkaCommandDecoder {
     private final ConcurrentHashMap<String, Node> topicsLeaders = new ConcurrentHashMap<>();
     private final Function<String, String> brokerAddressMapper;
     final EventLoopGroup workerGroup;
+    private volatile boolean coordinatorNamespaceExists = false;
 
     public KafkaProxyRequestHandler(String id, KafkaProtocolProxyMain.PulsarAdminProvider pulsarAdmin,
                                     AuthenticationService authenticationService,
@@ -146,11 +146,6 @@ public class KafkaProxyRequestHandler extends KafkaCommandDecoder {
         this.advertisedEndPoint = advertisedEndPoint;
         this.advertisedListeners = kafkaConfig.getKafkaAdvertisedListeners();
         this.defaultNumPartitions = kafkaConfig.getDefaultNumPartitions();
-        this.offsetsTopicName = new KopTopic(String.join("/",
-                kafkaConfig.getKafkaMetadataTenant(),
-                kafkaConfig.getKafkaMetadataNamespace(),
-                GROUP_METADATA_TOPIC_NAME)
-        ).getFullName();
         this.txnTopicName = new KopTopic(String.join("/",
                 kafkaConfig.getKafkaMetadataTenant(),
                 kafkaConfig.getKafkaMetadataNamespace(),
@@ -161,6 +156,7 @@ public class KafkaProxyRequestHandler extends KafkaCommandDecoder {
         this.groupIdStoredPath = kafkaConfig.getGroupIdZooKeeperPath();
 
     }
+
 
     @Override
     protected void channelPrepare(ChannelHandlerContext ctx, ByteBuf requestBuf,
@@ -286,9 +282,17 @@ public class KafkaProxyRequestHandler extends KafkaCommandDecoder {
         resultFuture.complete(apiResponse);
     }
 
+    private String getOffsetsTopicName() {
+        return new KopTopic(String.join("/",
+                getCurrentTenant(),
+                kafkaConfig.getKafkaMetadataNamespace(),
+                GROUP_METADATA_TOPIC_NAME)
+        ).getFullName();
+    }
+
 
     private boolean isInternalTopic(final String fullTopicName) {
-        return fullTopicName.equals(offsetsTopicName) || fullTopicName.equals(txnTopicName);
+        return fullTopicName.equals(getOffsetsTopicName()) || fullTopicName.equals(txnTopicName);
     }
 
     // Get all topics in the configured allowed namespaces.
@@ -1070,17 +1074,33 @@ public class KafkaProxyRequestHandler extends KafkaCommandDecoder {
                                                                  String key) {
         String pulsarTopicName = computePulsarTopicName(type, key);
         log.debug("findCoordinator for {} {} -> topic {}", type, key, pulsarTopicName);
-        return findBroker(TopicName.get(pulsarTopicName), true);
+        if (coordinatorNamespaceExists) {
+            return findBroker(TopicName.get(pulsarTopicName), true);
+        } else {
+            TopicName topicName = TopicName.get(pulsarTopicName);
+            String nameSpace = topicName.getNamespace();
+            return getPulsarAdmin(true)
+                    .thenCompose(admin -> admin.namespaces().getNamespacesAsync(topicName.getTenant())
+                            .thenCompose(namespaces -> {
+                                if (namespaces.contains(nameSpace)) {
+                                    coordinatorNamespaceExists = true;
+                                    return CompletableFuture.completedFuture(null);
+                                } else {
+                                    log.debug("findCoordinator for {} {} -> topic {} -> CREATING NAMESPACE {}", type, key, pulsarTopicName, nameSpace);
+                                    return admin.namespaces().createNamespaceAsync(nameSpace);
+                                }
+                            })
+                            .thenCompose(___ -> {
+                                coordinatorNamespaceExists = true;
+                                return findBroker(TopicName.get(pulsarTopicName), true);
+                            }));
+        }
     }
 
     private String computePulsarTopicName(FindCoordinatorRequest.CoordinatorType type, String key) {
         String pulsarTopicName;
         int partition;
-        String tenant = kafkaConfig.getKafkaMetadataTenant();
-        String currentUser = currentUser();
-        if (currentUser != null) {
-            tenant = currentUser;
-        }
+        String tenant = getCurrentTenant();
         if (type == FindCoordinatorRequest.CoordinatorType.TRANSACTION) {
             TransactionConfig transactionConfig = TransactionConfig.builder()
                     .transactionLogNumPartitions(kafkaConfig.getTxnLogTopicNumPartitions())
@@ -1357,7 +1377,7 @@ public class KafkaProxyRequestHandler extends KafkaCommandDecoder {
     }
 
     protected boolean isOffsetTopic(String topic) {
-        String offsetsTopic = kafkaConfig.getKafkaMetadataTenant() + "/"
+        String offsetsTopic = getCurrentTenant() + "/"
                 + kafkaConfig.getKafkaMetadataNamespace()
                 + "/" + GROUP_METADATA_TOPIC_NAME;
 
@@ -1384,6 +1404,25 @@ public class KafkaProxyRequestHandler extends KafkaCommandDecoder {
         } else {
             return null;
         }
+    }
+
+    String getCurrentTenant() {
+        if (authenticator != null
+                && authenticator.session() != null
+                && authenticator.session().getPrincipal() != null) {
+            // use Token subject as "tenant"
+            String username =  authenticator.session().getPrincipal().getUsername();
+            if (username != null && !username.isEmpty()) {
+                if (username.contains("/")) {
+                    username = username.substring(0, username.indexOf('/'));
+                }
+                log.info("using {} as tenant", username);
+                return username;
+            }
+        }
+        // fallback to using system (default) tenant
+        log.info("using {} as tenant", kafkaConfig.getKafkaMetadataTenant());
+        return kafkaConfig.getKafkaMetadataTenant();
     }
 
     private CompletableFuture<PulsarAdmin> getPulsarAdmin(boolean system) {

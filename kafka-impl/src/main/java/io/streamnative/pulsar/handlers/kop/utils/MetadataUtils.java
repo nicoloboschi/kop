@@ -57,7 +57,7 @@ public class MetadataUtils {
                                                      KafkaServiceConfiguration conf)
             throws PulsarAdminException {
         KopTopic kopTopic = new KopTopic(constructOffsetsTopicBaseName(tenant, conf));
-        createKafkaMetadataIfMissing(pulsarAdmin, clusterData, conf, kopTopic, conf.getOffsetsTopicNumPartitions());
+        createKafkaMetadataIfMissing(tenant, pulsarAdmin, clusterData, conf, kopTopic, conf.getOffsetsTopicNumPartitions());
     }
 
     public static void createTxnMetadataIfMissing(PulsarAdmin pulsarAdmin,
@@ -65,7 +65,7 @@ public class MetadataUtils {
                                                   KafkaServiceConfiguration conf)
             throws PulsarAdminException {
         KopTopic kopTopic = new KopTopic(constructTxnLogTopicBaseName(conf));
-        createKafkaMetadataIfMissing(pulsarAdmin, clusterData, conf, kopTopic, conf.getTxnLogTopicNumPartitions());
+        createKafkaMetadataIfMissing(conf.getKafkaMetadataTenant(), pulsarAdmin, clusterData, conf, kopTopic, conf.getTxnLogTopicNumPartitions());
     }
 
     /**
@@ -82,14 +82,15 @@ public class MetadataUtils {
      * <li>If the offset topic exists but some partitions are missing, the missing partitions will be created</li>
      * </ul>
      */
-    private static void createKafkaMetadataIfMissing(PulsarAdmin pulsarAdmin,
+    private static void createKafkaMetadataIfMissing(String tenant,
+                                                     PulsarAdmin pulsarAdmin,
                                                      ClusterData clusterData,
                                                      KafkaServiceConfiguration conf,
                                                      KopTopic kopTopic,
                                                      int partitionNum)
         throws PulsarAdminException {
         String cluster = conf.getClusterName();
-        String kafkaMetadataTenant = conf.getKafkaMetadataTenant();
+        String kafkaMetadataTenant = tenant;
         String kafkaMetadataNamespace = kafkaMetadataTenant + "/" + conf.getKafkaMetadataNamespace();
 
         boolean clusterExists = false;

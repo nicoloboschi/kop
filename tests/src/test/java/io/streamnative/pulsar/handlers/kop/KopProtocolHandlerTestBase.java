@@ -191,6 +191,10 @@ public abstract class KopProtocolHandlerTestBase {
         // Speed up tests for reducing rebalance time
         kafkaConfig.setGroupInitialRebalanceDelayMs(0);
 
+        // needed to clean up tests
+        kafkaConfig.setForceDeleteTenantAllowed(true);
+        kafkaConfig.setForceDeleteNamespaceAllowed(true);
+
         // set protocol related config
         String protocolHandlerDir = getProtocolHandlerDir();
 

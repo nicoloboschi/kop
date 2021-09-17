@@ -242,9 +242,17 @@ public class KafkaRequestHandler extends KafkaCommandDecoder {
                 && authenticator.session() != null
                 && authenticator.session().getPrincipal() != null) {
             // use Token subject as "tenant"
-            return authenticator.session().getPrincipal().getName();
+            String username =  authenticator.session().getPrincipal().getUsername();
+            if (username != null && !username.isEmpty()) {
+                if (username.contains("/")) {
+                    username = username.substring(0, username.indexOf('/'));
+                }
+                log.info("using {} as tenant", username);
+                return username;
+            }
         }
         // fallback to using system (default) tenant
+        log.info("using {} as tenant", kafkaConfig.getKafkaMetadataTenant());
         return kafkaConfig.getKafkaMetadataTenant();
     }
 

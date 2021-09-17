@@ -122,7 +122,7 @@ public class KafkaProtocolHandler implements ProtocolHandler, GroupCoordinatorAc
                 .get(tenant, kafkaConfig.getKafkaMetadataNamespace());
             this.groupCoordinator = groupCoordinator;
             this.kafkaTopicNs = NamespaceName
-                    .get(kafkaConfig.getKafkaTenant(), kafkaConfig.getKafkaNamespace());
+                    .get(tenant, kafkaConfig.getKafkaNamespace());
             this.brokerUrl = service.pulsar().getBrokerServiceUrl();
         }
 
@@ -343,6 +343,7 @@ public class KafkaProtocolHandler implements ProtocolHandler, GroupCoordinatorAc
     }
 
     private GroupCoordinator createAndBootGroupCoordinator(String tenant) {
+        log.info("createAndBootGroupCoordinator {}", tenant);
         final ClusterData clusterData = ClusterData.builder()
                 .serviceUrl(brokerService.getPulsar().getWebServiceAddress())
                 .serviceUrlTls(brokerService.getPulsar().getWebServiceAddressTls())
