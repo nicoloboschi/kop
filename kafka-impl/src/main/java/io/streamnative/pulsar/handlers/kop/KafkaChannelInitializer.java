@@ -43,9 +43,8 @@ public class KafkaChannelInitializer extends ChannelInitializer<SocketChannel> {
     @Getter
     private final KafkaServiceConfiguration kafkaConfig;
     @Getter
-    private final GroupCoordinatorAccessor groupCoordinator;
-    @Getter
-    private final TransactionCoordinator transactionCoordinator;
+    private final GroupCoordinatorAccessor groupCoordinatorAccessor;
+
     private final AdminManager adminManager;
     @Getter
     private final boolean enableTls;
@@ -59,8 +58,7 @@ public class KafkaChannelInitializer extends ChannelInitializer<SocketChannel> {
 
     public KafkaChannelInitializer(PulsarService pulsarService,
                                    KafkaServiceConfiguration kafkaConfig,
-                                   GroupCoordinatorAccessor groupCoordinator,
-                                   TransactionCoordinator transactionCoordinator,
+                                   GroupCoordinatorAccessor groupCoordinatorAccessor,
                                    AdminManager adminManager,
                                    boolean enableTLS,
                                    EndPoint advertisedEndPoint,
@@ -69,8 +67,7 @@ public class KafkaChannelInitializer extends ChannelInitializer<SocketChannel> {
         super();
         this.pulsarService = pulsarService;
         this.kafkaConfig = kafkaConfig;
-        this.groupCoordinator = groupCoordinator;
-        this.transactionCoordinator = transactionCoordinator;
+        this.groupCoordinatorAccessor = groupCoordinatorAccessor;
         this.adminManager = adminManager;
         this.enableTls = enableTLS;
         this.advertisedEndPoint = advertisedEndPoint;
@@ -99,7 +96,7 @@ public class KafkaChannelInitializer extends ChannelInitializer<SocketChannel> {
             new LengthFieldBasedFrameDecoder(MAX_FRAME_LENGTH, 0, 4, 0, 4));
         ch.pipeline().addLast("handler",
                 new KafkaRequestHandler(pulsarService, kafkaConfig,
-                        groupCoordinator, transactionCoordinator, adminManager, localBrokerDataCache,
+                        groupCoordinatorAccessor, adminManager, localBrokerDataCache,
                         enableTls, advertisedEndPoint, statsLogger));
     }
 

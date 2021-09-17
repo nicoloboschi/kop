@@ -106,7 +106,7 @@ public class KafkaProxyRequestHandler extends KafkaCommandDecoder {
     private final EndPoint advertisedEndPoint;
     private final String advertisedListeners;
     private final int defaultNumPartitions;
-    private final String txnTopicName;
+
     private final Set<String> allowedNamespaces;
     private final String groupIdStoredPath;
     @Getter
@@ -146,11 +146,7 @@ public class KafkaProxyRequestHandler extends KafkaCommandDecoder {
         this.advertisedEndPoint = advertisedEndPoint;
         this.advertisedListeners = kafkaConfig.getKafkaAdvertisedListeners();
         this.defaultNumPartitions = kafkaConfig.getDefaultNumPartitions();
-        this.txnTopicName = new KopTopic(String.join("/",
-                kafkaConfig.getKafkaMetadataTenant(),
-                kafkaConfig.getKafkaMetadataNamespace(),
-                TRANSACTION_STATE_TOPIC_NAME)
-        ).getFullName();
+
         this.allowedNamespaces = kafkaConfig.getKopAllowedNamespaces();
         this.entryFormatter = EntryFormatterFactory.create(kafkaConfig.getEntryFormat());
         this.groupIdStoredPath = kafkaConfig.getGroupIdZooKeeperPath();
@@ -290,9 +286,17 @@ public class KafkaProxyRequestHandler extends KafkaCommandDecoder {
         ).getFullName();
     }
 
+    private String getTxnTopicName() {
+        return new KopTopic(String.join("/",
+                getCurrentTenant(),
+                kafkaConfig.getKafkaMetadataNamespace(),
+                TRANSACTION_STATE_TOPIC_NAME)
+        ).getFullName();
+    }
+
 
     private boolean isInternalTopic(final String fullTopicName) {
-        return fullTopicName.equals(getOffsetsTopicName()) || fullTopicName.equals(txnTopicName);
+        return fullTopicName.equals(getOffsetsTopicName()) || fullTopicName.equals(getTxnTopicName());
     }
 
     // Get all topics in the configured allowed namespaces.
@@ -1104,7 +1108,7 @@ public class KafkaProxyRequestHandler extends KafkaCommandDecoder {
         if (type == FindCoordinatorRequest.CoordinatorType.TRANSACTION) {
             TransactionConfig transactionConfig = TransactionConfig.builder()
                     .transactionLogNumPartitions(kafkaConfig.getTxnLogTopicNumPartitions())
-                    .transactionMetadataTopicName(MetadataUtils.constructTxnLogTopicBaseName(kafkaConfig))
+                    .transactionMetadataTopicName(MetadataUtils.constructTxnLogTopicBaseName(tenant, kafkaConfig))
                     .build();
             partition = TransactionCoordinator.partitionFor(key, kafkaConfig.getTxnLogTopicNumPartitions());
             pulsarTopicName = TransactionCoordinator
@@ -1385,7 +1389,7 @@ public class KafkaProxyRequestHandler extends KafkaCommandDecoder {
     }
 
     protected boolean isTransactionTopic(String topic) {
-        String transactionTopic = kafkaConfig.getKafkaMetadataTenant() + "/"
+        String transactionTopic = getCurrentTenant() + "/"
                 + kafkaConfig.getKafkaMetadataNamespace()
                 + "/" + TRANSACTION_STATE_TOPIC_NAME;
 

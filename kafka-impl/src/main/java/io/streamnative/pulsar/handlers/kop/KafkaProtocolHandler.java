@@ -60,7 +60,6 @@ import org.apache.pulsar.broker.protocol.ProtocolHandler;
 import org.apache.pulsar.broker.service.BrokerService;
 import org.apache.pulsar.client.admin.Lookup;
 import org.apache.pulsar.client.admin.PulsarAdmin;
-import org.apache.pulsar.client.admin.PulsarAdminException;
 import org.apache.pulsar.client.api.PulsarClient;
 import org.apache.pulsar.client.impl.PulsarClientImpl;
 import org.apache.pulsar.common.naming.NamespaceBundle;
@@ -93,13 +92,16 @@ public class KafkaProtocolHandler implements ProtocolHandler, GroupCoordinatorAc
     private BrokerService brokerService;
 
     private Map<String, GroupCoordinator> groupCoordinatorsByTenant = new ConcurrentHashMap<>();
-
-    @Getter
-    private TransactionCoordinator transactionCoordinator;
+    private Map<String, TransactionCoordinator> transactionCoordinatorByTenant = new ConcurrentHashMap<>();
 
     @Override
     public GroupCoordinator getGroupCoordinator(String tenant) {
         return groupCoordinatorsByTenant.computeIfAbsent(tenant, this::createAndBootGroupCoordinator);
+    }
+
+    @Override
+    public TransactionCoordinator getTransactionCoordinator(String tenant) {
+        return transactionCoordinatorByTenant.computeIfAbsent(tenant, this::createAndBootTransactionCoordinator);
     }
 
     /**
@@ -319,20 +321,7 @@ public class KafkaProtocolHandler implements ProtocolHandler, GroupCoordinatorAc
         getGroupCoordinator(kafkaConfig.getKafkaMetadataTenant());
 
         if (kafkaConfig.isEnableTransactionCoordinator()) {
-            final ClusterData clusterData = ClusterData.builder()
-                    .serviceUrl(brokerService.getPulsar().getWebServiceAddress())
-                    .serviceUrlTls(brokerService.getPulsar().getWebServiceAddressTls())
-                    .brokerServiceUrl(brokerService.getPulsar().getBrokerServiceUrl())
-                    .brokerServiceUrlTls(brokerService.getPulsar().getBrokerServiceUrlTls())
-                    .build();
-
-            try {
-                initTransactionCoordinator(pulsarAdmin, clusterData);
-                startTransactionCoordinator();
-            } catch (Exception e) {
-                log.error("Initialized transaction coordinator failed.", e);
-                throw new IllegalStateException(e);
-            }
+            getTransactionCoordinator(kafkaConfig.getKafkaMetadataTenant());
         }
 
         Configuration conf = new PropertiesConfiguration();
@@ -340,6 +329,23 @@ public class KafkaProtocolHandler implements ProtocolHandler, GroupCoordinatorAc
             kafkaConfig.getKopPrometheusStatsLatencyRolloverSeconds());
         statsProvider.start(conf);
         brokerService.pulsar().addPrometheusRawMetricsProvider(statsProvider);
+    }
+
+    private TransactionCoordinator createAndBootTransactionCoordinator(String tenant) {
+        log.info("createAndBootTransactionCoordinator {}", tenant);
+        final ClusterData clusterData = ClusterData.builder()
+                .serviceUrl(brokerService.getPulsar().getWebServiceAddress())
+                .serviceUrlTls(brokerService.getPulsar().getWebServiceAddressTls())
+                .brokerServiceUrl(brokerService.getPulsar().getBrokerServiceUrl())
+                .brokerServiceUrlTls(brokerService.getPulsar().getBrokerServiceUrlTls())
+                .build();
+
+        try {
+            return initTransactionCoordinator(tenant, brokerService.getPulsar().getAdminClient(), clusterData);
+        } catch (Exception e) {
+            log.error("Initialized transaction coordinator failed.", e);
+            throw new IllegalStateException(e);
+        }
     }
 
     private GroupCoordinator createAndBootGroupCoordinator(String tenant) {
@@ -401,13 +407,13 @@ public class KafkaProtocolHandler implements ProtocolHandler, GroupCoordinatorAc
                     case PLAINTEXT:
                     case SASL_PLAINTEXT:
                         builder.put(endPoint.getInetAddress(), new KafkaChannelInitializer(brokerService.getPulsar(),
-                                kafkaConfig, this, transactionCoordinator, adminManager, false,
+                                kafkaConfig, this, adminManager, false,
                                 advertisedEndPoint, rootStatsLogger.scope(SERVER_SCOPE), localBrokerDataCache));
                         break;
                     case SSL:
                     case SASL_SSL:
                         builder.put(endPoint.getInetAddress(), new KafkaChannelInitializer(brokerService.getPulsar(),
-                                kafkaConfig, this, transactionCoordinator, adminManager, true,
+                                kafkaConfig, this, adminManager, true,
                                 advertisedEndPoint, rootStatsLogger.scope(SERVER_SCOPE), localBrokerDataCache));
                         break;
                 }
@@ -467,39 +473,35 @@ public class KafkaProtocolHandler implements ProtocolHandler, GroupCoordinatorAc
         return groupCoordinator;
     }
 
-    public void initTransactionCoordinator(PulsarAdmin pulsarAdmin, ClusterData clusterData) throws Exception {
+    public TransactionCoordinator initTransactionCoordinator(String tenant, PulsarAdmin pulsarAdmin, ClusterData clusterData) throws Exception {
         TransactionConfig transactionConfig = TransactionConfig.builder()
                 .transactionLogNumPartitions(kafkaConfig.getTxnLogTopicNumPartitions())
-                .transactionMetadataTopicName(MetadataUtils.constructTxnLogTopicBaseName(kafkaConfig))
+                .transactionMetadataTopicName(MetadataUtils.constructTxnLogTopicBaseName(tenant, kafkaConfig))
                 .build();
 
-        MetadataUtils.createTxnMetadataIfMissing(pulsarAdmin, clusterData, kafkaConfig);
+        MetadataUtils.createTxnMetadataIfMissing(tenant, pulsarAdmin, clusterData, kafkaConfig);
 
-        this.transactionCoordinator = TransactionCoordinator.of(
+        TransactionCoordinator transactionCoordinator = TransactionCoordinator.of(
                 transactionConfig,
                 kafkaConfig.getBrokerId(),
                 brokerService.getPulsar().getZkClient(),
                 kopBrokerLookupManager);
 
-        loadTxnLogTopics(transactionCoordinator);
-    }
+        loadTxnLogTopics(tenant, transactionCoordinator);
 
-    public void startTransactionCoordinator() throws Exception {
-        if (this.transactionCoordinator != null) {
-            this.transactionCoordinator.startup().get();
-        } else {
-            log.error("Failed to start transaction coordinator. Need init it first.");
-        }
+        transactionCoordinator.startup().get();
+
+        return transactionCoordinator;
     }
 
     /**
      * This method discovers ownership of offset topic partitions and attempts to load offset topics
      * assigned to this broker.
      */
-    private void loadTxnLogTopics(TransactionCoordinator txnCoordinator) throws Exception {
+    private void loadTxnLogTopics(String tenant, TransactionCoordinator txnCoordinator) throws Exception {
         Lookup lookupService = brokerService.pulsar().getAdminClient().lookups();
         String currentBroker = brokerService.pulsar().getBrokerServiceUrl();
-        String topicBase = MetadataUtils.constructTxnLogTopicBaseName(kafkaConfig);
+        String topicBase = MetadataUtils.constructTxnLogTopicBaseName(tenant, kafkaConfig);
         int numPartitions = kafkaConfig.getTxnLogTopicNumPartitions();
 
         Map<String, List<Integer>> mapBrokerToPartition = new HashMap<>();

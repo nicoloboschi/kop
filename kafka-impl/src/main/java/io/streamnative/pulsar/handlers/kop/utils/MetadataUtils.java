@@ -43,12 +43,8 @@ public class MetadataUtils {
             + "/" + Topic.GROUP_METADATA_TOPIC_NAME;
     }
 
-    public static String constructTxnLogTopicBaseName(KafkaServiceConfiguration conf) {
-        return constructTxnLogTopicBaseName(conf.getKafkaMetadataTenant(), conf);
-    }
-
     public static String constructTxnLogTopicBaseName(String tenant, KafkaServiceConfiguration conf) {
-        return conf.getKafkaMetadataTenant() + "/" + conf.getKafkaMetadataNamespace()
+        return tenant + "/" + conf.getKafkaMetadataNamespace()
                 + "/" + Topic.TRANSACTION_STATE_TOPIC_NAME;
     }
 
@@ -60,12 +56,13 @@ public class MetadataUtils {
         createKafkaMetadataIfMissing(tenant, pulsarAdmin, clusterData, conf, kopTopic, conf.getOffsetsTopicNumPartitions());
     }
 
-    public static void createTxnMetadataIfMissing(PulsarAdmin pulsarAdmin,
+    public static void createTxnMetadataIfMissing(String tenant,
+                                                  PulsarAdmin pulsarAdmin,
                                                   ClusterData clusterData,
                                                   KafkaServiceConfiguration conf)
             throws PulsarAdminException {
-        KopTopic kopTopic = new KopTopic(constructTxnLogTopicBaseName(conf));
-        createKafkaMetadataIfMissing(conf.getKafkaMetadataTenant(), pulsarAdmin, clusterData, conf, kopTopic, conf.getTxnLogTopicNumPartitions());
+        KopTopic kopTopic = new KopTopic(constructTxnLogTopicBaseName(tenant, conf));
+        createKafkaMetadataIfMissing(tenant, pulsarAdmin, clusterData, conf, kopTopic, conf.getTxnLogTopicNumPartitions());
     }
 
     /**

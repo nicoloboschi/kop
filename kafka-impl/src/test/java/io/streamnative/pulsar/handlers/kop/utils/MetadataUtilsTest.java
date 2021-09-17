@@ -56,7 +56,7 @@ public class MetadataUtilsTest {
         conf.setOffsetsTopicNumPartitions(8);
 
         final KopTopic offsetsTopic = new KopTopic(MetadataUtils.constructOffsetsTopicBaseName(conf.getKafkaMetadataTenant(), conf));
-        final KopTopic txnTopic = new KopTopic(MetadataUtils.constructTxnLogTopicBaseName(conf));
+        final KopTopic txnTopic = new KopTopic(MetadataUtils.constructTxnLogTopicBaseName(conf.getKafkaMetadataTenant(), conf));
 
         List<String> emptyList = Lists.newArrayList();
 
@@ -94,7 +94,7 @@ public class MetadataUtilsTest {
         doReturn(Lists.newArrayList(conf.getClusterName())).when(mockNamespaces)
                 .getNamespaceReplicationClusters(eq(namespace));
 
-        MetadataUtils.createTxnMetadataIfMissing(mockPulsarAdmin, clusterData, conf);
+        MetadataUtils.createTxnMetadataIfMissing(conf.getKafkaMetadataTenant(), mockPulsarAdmin, clusterData, conf);
 
         verify(mockTenants, times(1)).createTenant(eq(conf.getKafkaMetadataTenant()), any(TenantInfo.class));
         verify(mockNamespaces, times(1)).createNamespace(eq(conf.getKafkaMetadataTenant() + "/"
@@ -145,7 +145,7 @@ public class MetadataUtilsTest {
             + "/" + conf.getKafkaMetadataNamespace()));
 
         MetadataUtils.createOffsetMetadataIfMissing(conf.getKafkaMetadataTenant(), mockPulsarAdmin, clusterData, conf);
-        MetadataUtils.createTxnMetadataIfMissing(mockPulsarAdmin, clusterData, conf);
+        MetadataUtils.createTxnMetadataIfMissing(conf.getKafkaMetadataTenant(), mockPulsarAdmin, clusterData, conf);
 
         verify(mockTenants, times(1)).updateTenant(eq(conf.getKafkaMetadataTenant()), any(TenantInfo.class));
         verify(mockNamespaces, times(2)).setNamespaceReplicationClusters(eq(conf.getKafkaMetadataTenant()
