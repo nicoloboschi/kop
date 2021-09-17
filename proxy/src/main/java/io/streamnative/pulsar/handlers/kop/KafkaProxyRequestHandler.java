@@ -1076,7 +1076,11 @@ public class KafkaProxyRequestHandler extends KafkaCommandDecoder {
     private String computePulsarTopicName(FindCoordinatorRequest.CoordinatorType type, String key) {
         String pulsarTopicName;
         int partition;
-
+        String tenant = kafkaConfig.getKafkaMetadataTenant();
+        String currentUser = currentUser();
+        if (currentUser != null) {
+            tenant = currentUser;
+        }
         if (type == FindCoordinatorRequest.CoordinatorType.TRANSACTION) {
             TransactionConfig transactionConfig = TransactionConfig.builder()
                     .transactionLogNumPartitions(kafkaConfig.getTxnLogTopicNumPartitions())
@@ -1088,7 +1092,7 @@ public class KafkaProxyRequestHandler extends KafkaCommandDecoder {
         } else if (type == FindCoordinatorRequest.CoordinatorType.GROUP) {
             partition = GroupMetadataManager.getPartitionId(key, kafkaConfig.getOffsetsTopicNumPartitions());
             pulsarTopicName = GroupMetadataManager
-                    .getTopicPartitionName(kafkaConfig.getKafkaMetadataTenant() + "/"
+                    .getTopicPartitionName(tenant + "/"
                     + kafkaConfig.getKafkaMetadataNamespace()
                     + "/" + Topic.GROUP_METADATA_TOPIC_NAME, partition);
         } else {

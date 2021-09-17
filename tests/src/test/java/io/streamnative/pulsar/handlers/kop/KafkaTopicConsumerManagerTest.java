@@ -76,14 +76,14 @@ public class KafkaTopicConsumerManagerTest extends KopProtocolHandlerTestBase {
         super.internalSetup();
 
         ProtocolHandler handler = pulsar.getProtocolHandlers().protocol("kafka");
-        GroupCoordinator groupCoordinator = ((KafkaProtocolHandler) handler).getGroupCoordinator();
+        GroupCoordinator groupCoordinator = ((KafkaProtocolHandler) handler).getGroupCoordinator(conf.getKafkaMetadataTenant());
         TransactionCoordinator transactionCoordinator = ((KafkaProtocolHandler) handler).getTransactionCoordinator();
 
         adminManager = new AdminManager(pulsar.getAdminClient(), conf);
         kafkaRequestHandler = new KafkaRequestHandler(
             pulsar,
             (KafkaServiceConfiguration) conf,
-            groupCoordinator,
+            tenant -> groupCoordinator,
             transactionCoordinator,
             adminManager,
             pulsar.getLocalMetadataStore().getMetadataCache(LocalBrokerData.class),

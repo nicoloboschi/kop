@@ -21,7 +21,6 @@ import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
 import io.netty.handler.codec.LengthFieldPrepender;
 import io.netty.handler.ssl.SslHandler;
 import io.netty.handler.timeout.IdleStateHandler;
-import io.streamnative.pulsar.handlers.kop.coordinator.group.GroupCoordinator;
 import io.streamnative.pulsar.handlers.kop.coordinator.transaction.TransactionCoordinator;
 import io.streamnative.pulsar.handlers.kop.stats.StatsLogger;
 import io.streamnative.pulsar.handlers.kop.utils.ssl.SSLUtils;
@@ -44,7 +43,7 @@ public class KafkaChannelInitializer extends ChannelInitializer<SocketChannel> {
     @Getter
     private final KafkaServiceConfiguration kafkaConfig;
     @Getter
-    private final GroupCoordinator groupCoordinator;
+    private final GroupCoordinatorAccessor groupCoordinator;
     @Getter
     private final TransactionCoordinator transactionCoordinator;
     private final AdminManager adminManager;
@@ -60,7 +59,7 @@ public class KafkaChannelInitializer extends ChannelInitializer<SocketChannel> {
 
     public KafkaChannelInitializer(PulsarService pulsarService,
                                    KafkaServiceConfiguration kafkaConfig,
-                                   GroupCoordinator groupCoordinator,
+                                   GroupCoordinatorAccessor groupCoordinator,
                                    TransactionCoordinator transactionCoordinator,
                                    AdminManager adminManager,
                                    boolean enableTLS,
