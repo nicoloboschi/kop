@@ -114,7 +114,7 @@ public class KafkaProxyRequestHandler extends KafkaCommandDecoder {
     private final Set<String> groupIds = new HashSet<>();
     private final ConcurrentHashMap<String, Node> topicsLeaders = new ConcurrentHashMap<>();
     private final Function<String, String> brokerAddressMapper;
-    final EventLoopGroup workerGroup;
+    private final EventLoopGroup workerGroup;
     private volatile boolean coordinatorNamespaceExists = false;
 
     public KafkaProxyRequestHandler(String id, KafkaProtocolProxyMain.PulsarAdminProvider pulsarAdmin,
@@ -664,6 +664,7 @@ public class KafkaProxyRequestHandler extends KafkaCommandDecoder {
 
     protected void handleProduceRequest(KafkaHeaderAndRequest produceHar,
                                         CompletableFuture<AbstractResponse> resultFuture) {
+        log.info("handleProduceRequest id {}", produceHar.getHeader().correlationId());
         checkArgument(produceHar.getRequest() instanceof ProduceRequest);
         ProduceRequest produceRequest = (ProduceRequest) produceHar.getRequest();
 
@@ -736,7 +737,7 @@ public class KafkaProxyRequestHandler extends KafkaCommandDecoder {
             // all the partitions are owned by one single broker,
             // we can forward the whole request to the only broker
             final PartitionMetadata broker = first;
-            log.debug("forward FULL produce of {} parts to {}", numPartitions, broker);
+            log.debug("forward FULL produce id {} of {} parts to {}", produceHar.getHeader().correlationId(), numPartitions, broker);
             grabConnectionToBroker(broker.leader().host(), broker.leader().port()).
                     forwardRequest(produceHar)
                     .thenAccept(response -> {
@@ -746,6 +747,8 @@ public class KafkaProxyRequestHandler extends KafkaCommandDecoder {
                                 String fullTopicName = KopTopic.toString(topicPartition);
                                 log.info("Broker {} is no more the leader for {}", broker.leader(), fullTopicName);
                                 topicsLeaders.remove(fullTopicName);
+                            } else {
+                                log.debug("forward FULL produce id {} COMPLETE  of {} parts to {}", produceHar.getHeader().correlationId(), numPartitions, broker);
                             }
                         });
                         resultFuture.complete(response);
