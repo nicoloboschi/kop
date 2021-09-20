@@ -93,6 +93,12 @@ public class KafkaProtocolHandler implements ProtocolHandler, GroupCoordinatorAc
 
     private Map<String, GroupCoordinator> groupCoordinatorsByTenant = new ConcurrentHashMap<>();
     private Map<String, TransactionCoordinator> transactionCoordinatorByTenant = new ConcurrentHashMap<>();
+    private Map<String, KopEventManager> kopEventManagerByTenant = new ConcurrentHashMap<>();
+
+    public KopEventManager getKopEventManager(String tenant) {
+        return kopEventManagerByTenant.get(tenant);
+    }
+
 
     @Override
     public GroupCoordinator getGroupCoordinator(String tenant) {
@@ -103,7 +109,6 @@ public class KafkaProtocolHandler implements ProtocolHandler, GroupCoordinatorAc
     public TransactionCoordinator getTransactionCoordinator(String tenant) {
         return transactionCoordinatorByTenant.computeIfAbsent(tenant, this::createAndBootTransactionCoordinator);
     }
-
     /**
      * Listener for the changing of topic that stores offsets of consumer group.
      */
@@ -294,6 +299,12 @@ public class KafkaProtocolHandler implements ProtocolHandler, GroupCoordinatorAc
         ZooKeeperUtils.tryCreatePath(brokerService.pulsar().getZkClient(),
                 kafkaConfig.getGroupIdZooKeeperPath(), new byte[0]);
 
+        ZooKeeperUtils.tryCreatePath(brokerService.pulsar().getZkClient(),
+                KopEventManager.getKopPath(), new byte[0]);
+
+        ZooKeeperUtils.tryCreatePath(brokerService.pulsar().getZkClient(),
+                KopEventManager.getDeleteTopicsPath(), new byte[0]);
+
         PulsarAdmin pulsarAdmin;
         try {
             pulsarAdmin = brokerService.getPulsar().getAdminClient();
@@ -363,6 +374,14 @@ public class KafkaProtocolHandler implements ProtocolHandler, GroupCoordinatorAc
 
             // init and start group coordinator
             groupCoordinator = startGroupCoordinator(tenant, brokerService.getPulsar().getClient());
+
+            // init KopEventManager
+            KopEventManager kopEventManager = new KopEventManager(groupCoordinator,
+                    adminManager,
+                    brokerService.getPulsar().getLocalMetadataStore());
+            kopEventManager.start();
+            kopEventManagerByTenant.put(tenant, kopEventManager);
+
             // and listener for Offset topics load/unload
             brokerService.pulsar()
                     .getNamespaceService()
@@ -372,6 +391,7 @@ public class KafkaProtocolHandler implements ProtocolHandler, GroupCoordinatorAc
             log.error("Failed to create offset metadata", e);
             throw new IllegalStateException(e);
         }
+
 
 
         // init kafka namespaces
@@ -429,9 +449,15 @@ public class KafkaProtocolHandler implements ProtocolHandler, GroupCoordinatorAc
     public void close() {
         Optional.ofNullable(LOOKUP_CLIENT_MAP.remove(brokerService.pulsar())).ifPresent(LookupClient::close);
         adminManager.shutdown();
-        for (GroupCoordinator groupCoordinator : groupCoordinatorsByTenant.values()) {
-            groupCoordinator.shutdown();
+        for (Map.Entry<String, GroupCoordinator> groupCoordinator : groupCoordinatorsByTenant.entrySet()) {
+            String tenant = groupCoordinator.getKey();
+            groupCoordinator.getValue().shutdown();
+            KopEventManager kopEventManager = kopEventManagerByTenant.get(tenant);
+            if (kopEventManager != null) {
+                kopEventManager.close();
+            }
         }
+
         KafkaTopicManager.LOOKUP_CACHE.clear();
         KopBrokerLookupManager.clear();
         KafkaTopicManager.closeKafkaTopicConsumerManagers();
@@ -530,4 +556,5 @@ public class KafkaProtocolHandler implements ProtocolHandler, GroupCoordinatorAc
     public static @NonNull LookupClient getLookupClient(final PulsarService pulsarService) {
         return LOOKUP_CLIENT_MAP.computeIfAbsent(pulsarService, ignored -> new LookupClient(pulsarService));
     }
+
 }
