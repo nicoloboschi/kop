@@ -159,7 +159,7 @@ public class KafkaRequestHandlerWithAuthorizationTest extends KopProtocolHandler
         handler = new KafkaRequestHandler(
                 pulsar,
                 (KafkaServiceConfiguration) conf,
-                new GroupCoordinatorAccessor() {
+                new TenantContextManager() {
                     @Override
                     public GroupCoordinator getGroupCoordinator(String tenant) {
                         return groupCoordinator;

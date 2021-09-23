@@ -132,7 +132,7 @@ public class KafkaApisTest extends KopProtocolHandlerTestBase {
         kafkaRequestHandler = new KafkaRequestHandler(
             pulsar,
             (KafkaServiceConfiguration) conf,
-                new GroupCoordinatorAccessor() {
+                new TenantContextManager() {
                     @Override
                     public GroupCoordinator getGroupCoordinator(String tenant) {
                         return groupCoordinator;

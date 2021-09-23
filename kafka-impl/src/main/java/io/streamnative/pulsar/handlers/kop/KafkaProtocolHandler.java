@@ -74,7 +74,7 @@ import org.apache.pulsar.policies.data.loadbalancer.LocalBrokerData;
  * Kafka Protocol Handler load and run by Pulsar Service.
  */
 @Slf4j
-public class KafkaProtocolHandler implements ProtocolHandler, GroupCoordinatorAccessor {
+public class KafkaProtocolHandler implements ProtocolHandler, TenantContextManager {
 
     public static final String PROTOCOL_NAME = "kafka";
     public static final String TLS_HANDLER = "tls";

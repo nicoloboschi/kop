@@ -190,7 +190,7 @@ public class KafkaRequestHandler extends KafkaCommandDecoder {
 
     private final PulsarService pulsarService;
     private final KafkaTopicManager topicManager;
-    private final GroupCoordinatorAccessor groupCoordinatorAccessor;
+    private final TenantContextManager groupCoordinatorAccessor;
 
     private final String clusterName;
     private final ScheduledExecutorService executor;
@@ -264,7 +264,7 @@ public class KafkaRequestHandler extends KafkaCommandDecoder {
 
     public KafkaRequestHandler(PulsarService pulsarService,
                                KafkaServiceConfiguration kafkaConfig,
-                               GroupCoordinatorAccessor groupCoordinatorAccessor,
+                               TenantContextManager groupCoordinatorAccessor,
                                AdminManager adminManager,
                                MetadataCache<LocalBrokerData> localBrokerDataCache,
                                Boolean tlsEnabled,
