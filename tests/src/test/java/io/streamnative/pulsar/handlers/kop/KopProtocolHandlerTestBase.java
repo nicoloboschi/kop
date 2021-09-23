@@ -174,6 +174,9 @@ public abstract class KopProtocolHandlerTestBase {
         kafkaConfig.setAllowAutoTopicCreationType("partitioned");
         kafkaConfig.setBrokerDeleteInactiveTopicsEnabled(false);
 
+        kafkaConfig.setForceDeleteTenantAllowed(true);
+        kafkaConfig.setForceDeleteNamespaceAllowed(true);
+
         kafkaConfig.setKafkaMetadataTenant(tenant);
         kafkaConfig.setKafkaMetadataNamespace(namespace);
 

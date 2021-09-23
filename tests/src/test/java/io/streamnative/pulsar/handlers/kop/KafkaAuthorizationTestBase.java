@@ -16,6 +16,7 @@ package io.streamnative.pulsar.handlers.kop;
 import static org.mockito.Mockito.spy;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
+import static org.testng.Assert.assertNotNull;
 import static org.testng.Assert.assertTrue;
 import static org.testng.AssertJUnit.fail;
 
@@ -96,8 +97,10 @@ public abstract class KafkaAuthorizationTestBase extends KopProtocolHandlerTestB
         anotherToken = AuthTokenUtils.createToken(secretKey, ANOTHER_USER, Optional.empty());
         proxyToken = AuthTokenUtils.createToken(secretKey, PROXY_USER, Optional.empty());
 
+        boolean originalKafkaEnableMultiTenantMetadata = conf.isKafkaEnableMultiTenantMetadata();
         super.resetConfig();
         conf.setProxyRoles(Sets.newHashSet(PROXY_USER));
+        conf.setKafkaEnableMultiTenantMetadata(originalKafkaEnableMultiTenantMetadata);
         conf.setSaslAllowedMechanisms(Sets.newHashSet("PLAIN"));
         conf.setKafkaMetadataTenant("internal");
         conf.setKafkaMetadataNamespace("__kafka");
@@ -146,6 +149,9 @@ public abstract class KafkaAuthorizationTestBase extends KopProtocolHandlerTestB
                             .adminRoles(Collections.singleton(ADMIN_USER))
                             .allowedClusters(Collections.singleton(configClusterName))
                             .build());
+            TenantInfo tenantInfo = admin.tenants().getTenantInfo(TENANT);
+            log.info("tenantInfo for {} {} in test", TENANT, tenantInfo);
+            assertNotNull(tenantInfo);
             admin.namespaces().createNamespace(newTenant + "/" + NAMESPACE);
             admin.topics().createPartitionedTopic(testTopic, 1);
             @Cleanup
@@ -288,6 +294,7 @@ public abstract class KafkaAuthorizationTestBase extends KopProtocolHandlerTestB
         AdminClient adminClient = AdminClient.create(props);
         ListTopicsResult listTopicsResult = adminClient.listTopics();
         Set<String> topics = listTopicsResult.names().get();
+
         if (isProxyStarted()) {
             // https://github.com/apache/pulsar/issues/11945
             assertEquals(topics.size(), 0);
@@ -295,6 +302,9 @@ public abstract class KafkaAuthorizationTestBase extends KopProtocolHandlerTestB
             assertEquals(topics.size(), 1);
             assertTrue(topics.contains(newTopic));
         }
+
+        assertEquals(topics.size(), 1);
+        assertTrue(topics.contains(newTopic));
 
         // Cleanup
         kConsumer.close();

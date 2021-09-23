@@ -71,6 +71,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -190,7 +191,7 @@ public class KafkaRequestHandler extends KafkaCommandDecoder {
 
     private final PulsarService pulsarService;
     private final KafkaTopicManager topicManager;
-    private final TenantContextManager groupCoordinatorAccessor;
+    private final TenantContextManager tenantContextManager;
 
     private final String clusterName;
     private final ScheduledExecutorService executor;
@@ -236,35 +237,44 @@ public class KafkaRequestHandler extends KafkaCommandDecoder {
     private volatile boolean autoReadDisabledPublishBufferLimiting = false;
 
     private String getCurrentTenant() {
-        if (authenticator != null
+        if (kafkaConfig.isKafkaEnableMultiTenantMetadata()
+                && authenticator != null
                 && authenticator.session() != null
-                && authenticator.session().getPrincipal() != null) {
-            // use Token subject as "tenant"
-            String username =  authenticator.session().getPrincipal().getUsername();
-            if (username != null && !username.isEmpty()) {
-                if (username.contains("/")) {
-                    username = username.substring(0, username.indexOf('/'));
-                }
-                log.info("using {} as tenant", username);
-                return username;
-            }
+                && authenticator.session().getPrincipal() != null
+                && authenticator.session().getPrincipal().getTenantSpec() != null) {
+            String tenantSpec =  authenticator.session().getPrincipal().getTenantSpec();
+            return extractTenantFromTenantSpec(tenantSpec);
         }
         // fallback to using system (default) tenant
-        log.info("using {} as tenant", kafkaConfig.getKafkaMetadataTenant());
+        log.debug("using {} as tenant", kafkaConfig.getKafkaMetadataTenant());
         return kafkaConfig.getKafkaMetadataTenant();
     }
 
+    private static String extractTenantFromTenantSpec(String tenantSpec) {
+        if (tenantSpec != null && !tenantSpec.isEmpty()) {
+            String tenant = tenantSpec;
+            // username can be "tenant" or "tenant/namespace"
+            if (tenantSpec.contains("/")) {
+                tenant = tenantSpec.substring(0, tenantSpec.indexOf('/'));
+            }
+            log.debug("using {} as tenant", tenant);
+            return tenant;
+        } else {
+            return tenantSpec;
+        }
+    }
+
     public GroupCoordinator getGroupCoordinator() {
-        return groupCoordinatorAccessor.getGroupCoordinator(getCurrentTenant());
+        return tenantContextManager.getGroupCoordinator(getCurrentTenant());
     }
 
     public TransactionCoordinator getTransactionCoordinator() {
-        return groupCoordinatorAccessor.getTransactionCoordinator(getCurrentTenant());
+        return tenantContextManager.getTransactionCoordinator(getCurrentTenant());
     }
 
     public KafkaRequestHandler(PulsarService pulsarService,
                                KafkaServiceConfiguration kafkaConfig,
-                               TenantContextManager groupCoordinatorAccessor,
+                               TenantContextManager tenantContextManager,
                                AdminManager adminManager,
                                MetadataCache<LocalBrokerData> localBrokerDataCache,
                                Boolean tlsEnabled,
@@ -272,7 +282,7 @@ public class KafkaRequestHandler extends KafkaCommandDecoder {
                                StatsLogger statsLogger) throws Exception {
         super(statsLogger, kafkaConfig);
         this.pulsarService = pulsarService;
-        this.groupCoordinatorAccessor = groupCoordinatorAccessor;
+        this.tenantContextManager = tenantContextManager;
         this.clusterName = kafkaConfig.getClusterName();
         this.executor = pulsarService.getExecutor();
         this.admin = pulsarService.getAdminClient();
@@ -374,7 +384,8 @@ public class KafkaRequestHandler extends KafkaCommandDecoder {
                                   BiConsumer<String, Long> registerRequestLatency)
             throws AuthenticationException {
         if (authenticator != null) {
-            authenticator.authenticate(ctx, requestBuf, registerRequestParseLatency, registerRequestLatency);
+            authenticator.authenticate(ctx, requestBuf, registerRequestParseLatency, registerRequestLatency,
+                    this::validateTenantAccessForSession);
         }
     }
 
@@ -465,9 +476,10 @@ public class KafkaRequestHandler extends KafkaCommandDecoder {
         return admin.topics().getPartitionedTopicMetadataAsync(topicName);
     }
 
-    private boolean isInternalTopic(final String fullTopicName) {
-        return fullTopicName.equals(getOffsetsTopicName())
-                || fullTopicName.equals(getTxnTopicName());
+    public static boolean isInternalTopic(final String fullTopicName) {
+        String partitionedTopicName = TopicName.get(fullTopicName).getPartitionedTopicName();
+        return partitionedTopicName.endsWith("/" + GROUP_METADATA_TOPIC_NAME)
+                || partitionedTopicName.endsWith("/" + TRANSACTION_STATE_TOPIC_NAME);
     }
 
     // Get all topics in the configured allowed namespaces.
@@ -885,7 +897,8 @@ public class KafkaRequestHandler extends KafkaCommandDecoder {
             byteBuf.release();
             if (e == null) {
                 if (batch.isTransactional()) {
-                    getTransactionCoordinator().addActivePidOffset(TopicName.get(partitionName), batch.producerId(), offset);
+                    getTransactionCoordinator().addActivePidOffset(TopicName.get(partitionName), batch.producerId(),
+                                                                    offset);
                 }
                 requestStats.getMessagePublishStats().registerSuccessfulEvent(
                         MathUtils.elapsedNanos(beforePublish), TimeUnit.NANOSECONDS);
@@ -992,7 +1005,7 @@ public class KafkaRequestHandler extends KafkaCommandDecoder {
                                         final Consumer<Errors> errorsConsumer,
                                         final Consumer<Throwable> exceptionConsumer) {
         // check KOP inner topic
-        if (isOffsetTopic(fullPartitionName) || isTransactionTopic(fullPartitionName)) {
+        if (isInternalTopic(fullPartitionName)) {
             log.error("[{}] Request {}: not support produce message to inner topic. topic: {}",
                     ctx.channel(), produceHar.getHeader(), topicPartition);
             errorsConsumer.accept(Errors.INVALID_TOPIC_EXCEPTION);
@@ -2165,9 +2178,7 @@ public class KafkaRequestHandler extends KafkaCommandDecoder {
         ctx.close();
     }
 
-    private CompletableFuture<Optional<String>>
-    getProtocolDataToAdvertise(InetSocketAddress pulsarAddress,
-                               TopicName topic) {
+    private CompletableFuture<Optional<String>> getProtocolDataToAdvertise(InetSocketAddress pulsarAddress, TopicName topic) {
         CompletableFuture<Optional<String>> returnFuture = new CompletableFuture<>();
 
         if (pulsarAddress == null) {
@@ -2280,22 +2291,6 @@ public class KafkaRequestHandler extends KafkaCommandDecoder {
                     );
             });
         return returnFuture;
-    }
-
-    protected boolean isOffsetTopic(String topic) {
-        String offsetsTopic = getCurrentTenant() + "/"
-            + kafkaConfig.getKafkaMetadataNamespace()
-            + "/" + GROUP_METADATA_TOPIC_NAME;
-
-        return topic != null && topic.contains(offsetsTopic);
-    }
-
-    protected boolean isTransactionTopic(String topic) {
-        String transactionTopic = getCurrentTenant() + "/"
-            + kafkaConfig.getKafkaMetadataNamespace()
-            + "/" + TRANSACTION_STATE_TOPIC_NAME;
-
-        return topic != null && topic.contains(transactionTopic);
     }
 
     public CompletableFuture<PartitionMetadata> findBroker(TopicName topic) {
@@ -2474,15 +2469,18 @@ public class KafkaRequestHandler extends KafkaCommandDecoder {
 
     @VisibleForTesting
     protected CompletableFuture<Boolean> authorize(AclOperation operation, Resource resource) {
+        Session session = authenticator != null ? authenticator.session() : null;
+        return authorize(operation, resource, session);
+    }
+
+    protected CompletableFuture<Boolean> authorize(AclOperation operation, Resource resource, Session session) {
         if (authorizer == null) {
             return CompletableFuture.completedFuture(true);
         }
-        if (authenticator.session() == null) {
+        if (session == null) {
             return CompletableFuture.completedFuture(false);
         }
-
-        CompletableFuture<Boolean> isAuthorizedFuture;
-        Session session = authenticator.session();
+        CompletableFuture<Boolean> isAuthorizedFuture = null;
         switch (operation) {
             case READ:
                 isAuthorizedFuture = authorizer.canConsumeAsync(session.getPrincipal(), resource);
@@ -2494,6 +2492,11 @@ public class KafkaRequestHandler extends KafkaCommandDecoder {
             case DESCRIBE:
                 isAuthorizedFuture = authorizer.canLookupAsync(session.getPrincipal(), resource);
                 break;
+            case ANY:
+                if (resource.getResourceType() == ResourceType.TENANT) {
+                    isAuthorizedFuture = authorizer.canAccessTenantAsync(session.getPrincipal(), resource);
+                }
+                break;
             case CREATE:
             case DELETE:
             case CLUSTER_ACTION:
@@ -2502,11 +2505,44 @@ public class KafkaRequestHandler extends KafkaCommandDecoder {
             case ALTER:
             case UNKNOWN:
             case ALL:
-            case ANY:
             default:
-                return FutureUtil.failedFuture(
-                        new IllegalStateException("AclOperation [" + operation.name() + "] is not supported."));
+                break;
+        }
+        if (isAuthorizedFuture == null) {
+            return FutureUtil.failedFuture(
+                    new IllegalStateException("AclOperation [" + operation.name() + "] is not supported."));
         }
         return isAuthorizedFuture;
+    }
+
+    /**
+     * If we are using kafkaEnableMultiTenantMetadata we need to ensure
+     * that the TenantSpec refer to an existing tenant.
+     * @param session
+     * @return whether the tenant is accessible
+     */
+    private boolean validateTenantAccessForSession(Session session)
+            throws AuthenticationException {
+        if (!kafkaConfig.isKafkaEnableMultiTenantMetadata()) {
+            // we are not leveraging kafkaEnableMultiTenantMetadata feature
+            // the client will access only system tenant
+            return true;
+        }
+        String tenantSpec = session.getPrincipal().getTenantSpec();
+        if (tenantSpec == null) {
+            // we are not leveraging kafkaEnableMultiTenantMetadata feature
+            // the client will access only system tenant
+            return true;
+        }
+        String currentTenant = extractTenantFromTenantSpec(tenantSpec);
+        try {
+            Boolean granted = authorize(AclOperation.ANY,
+                    Resource.of(ResourceType.TENANT, currentTenant), session)
+                    .get();
+            return granted != null && granted;
+        } catch (ExecutionException | InterruptedException err) {
+            log.error("Internal error while verifying tenant access", err);
+            throw new AuthenticationException("Internal error while verifying tenant access:" + err, err);
+        }
     }
 }

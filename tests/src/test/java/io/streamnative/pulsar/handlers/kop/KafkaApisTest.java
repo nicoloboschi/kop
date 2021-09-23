@@ -125,13 +125,16 @@ public class KafkaApisTest extends KopProtocolHandlerTestBase {
         log.info("created namespaces, init handler");
 
         ProtocolHandler handler = pulsar.getProtocolHandlers().protocol("kafka");
-        GroupCoordinator groupCoordinator = ((KafkaProtocolHandler) handler).getGroupCoordinator(conf.getKafkaMetadataTenant());
-        TransactionCoordinator transactionCoordinator = ((KafkaProtocolHandler) handler).getTransactionCoordinator(conf.getKafkaMetadataTenant());
+
+        GroupCoordinator groupCoordinator = ((KafkaProtocolHandler) handler)
+                .getGroupCoordinator(conf.getKafkaMetadataTenant());
+        TransactionCoordinator transactionCoordinator = ((KafkaProtocolHandler) handler)
+                .getTransactionCoordinator(conf.getKafkaMetadataTenant());
 
         adminManager = new AdminManager(pulsar.getAdminClient(), conf);
         kafkaRequestHandler = new KafkaRequestHandler(
-            pulsar,
-            (KafkaServiceConfiguration) conf,
+                pulsar,
+                (KafkaServiceConfiguration) conf,
                 new TenantContextManager() {
                     @Override
                     public GroupCoordinator getGroupCoordinator(String tenant) {
@@ -143,11 +146,11 @@ public class KafkaApisTest extends KopProtocolHandlerTestBase {
                         return transactionCoordinator;
                     }
                 },
-            adminManager,
-            pulsar.getLocalMetadataStore().getMetadataCache(LocalBrokerData.class),
-            false,
-            getPlainEndPoint(),
-            NullStatsLogger.INSTANCE);
+                adminManager,
+                pulsar.getLocalMetadataStore().getMetadataCache(LocalBrokerData.class),
+                false,
+                getPlainEndPoint(),
+                NullStatsLogger.INSTANCE);
         ChannelHandlerContext mockCtx = mock(ChannelHandlerContext.class);
         Channel mockChannel = mock(Channel.class);
         doReturn(mockChannel).when(mockCtx).channel();
